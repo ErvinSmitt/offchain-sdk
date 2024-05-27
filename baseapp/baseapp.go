@@ -11,29 +11,22 @@ import (
 	ethdb "github.com/ethereum/go-ethereum/ethdb"
 )
 
-// BaseApp is the base application.
+// BaseApp is the base application structure.
 type BaseApp struct {
-	// name is the name of the application
-	name string
-
-	// logger is the logger for the baseapp.
-	logger log.Logger
-
-	// jobMgr
-	jobMgr *JobManager
-
-	// svr is the server for the baseapp.
-	svr *server.Server
+	name    string        // Name of the application
+	logger  log.Logger    // Logger for the base application
+	jobMgr  *JobManager   // Job manager for handling jobs
+	server  *server.Server // HTTP server for the application
 }
 
-// New creates a new baseapp.
+// New creates and initializes a new BaseApp instance.
 func New(
 	name string,
 	logger log.Logger,
 	ethClient eth.Client,
 	jobs []job.Basic,
 	db ethdb.KeyValueStore,
-	svr *server.Server,
+	server *server.Server,
 ) *BaseApp {
 	return &BaseApp{
 		name:   name,
@@ -46,40 +39,53 @@ func New(
 				db:       db,
 			},
 		),
-		svr: svr,
+		server: server,
 	}
 }
 
-// Logger returns the logger for the baseapp.
+// Logger returns a namespaced logger for the BaseApp.
 func (b *BaseApp) Logger() log.Logger {
 	return b.logger.With("namespace", "baseapp")
 }
 
-// Start starts the baseapp.
+// Start initializes and starts the BaseApp.
 func (b *BaseApp) Start(ctx context.Context) error {
-	b.Logger().Info("attempting to start")
-	defer b.Logger().Info("successfully started")
+	b.Logger().Info("Attempting to start BaseApp")
+	defer b.Logger().Info("BaseApp successfully started")
 
-	// Start the job manager and the producers.
-	b.jobMgr.Start(ctx)
-	b.jobMgr.RunProducers(ctx)
+	// Start the job manager and producers.
+	if err := b.jobMgr.Start(ctx); err != nil {
+		b.Logger().Error("Failed to start job manager", "error", err)
+		return err
+	}
 
-	if b.svr == nil {
-		b.Logger().Info("no HTTP server registered, skipping")
+	go func() {
+		if err := b.jobMgr.RunProducers(ctx); err != nil {
+			b.Logger().Error("Failed to run job producers", "error", err)
+		}
+	}()
+
+	if b.server == nil {
+		b.Logger().Info("No HTTP server registered, skipping server start")
 	} else {
-		go b.svr.Start(ctx)
+		go func() {
+			if err := b.server.Start(ctx); err != nil {
+				b.Logger().Error("Failed to start server", "error", err)
+			}
+		}()
 	}
 
 	return nil
 }
 
-// Stop stops the baseapp.
+// Stop gracefully stops the BaseApp.
 func (b *BaseApp) Stop() {
-	b.Logger().Info("attempting to stop")
-	defer b.Logger().Info("successfully stopped")
+	b.Logger().Info("Attempting to stop BaseApp")
+	defer b.Logger().Info("BaseApp successfully stopped")
 
 	b.jobMgr.Stop()
-	if b.svr != nil {
-		b.svr.Stop()
+
+	if b.server != nil {
+		b.server.Stop()
 	}
 }
